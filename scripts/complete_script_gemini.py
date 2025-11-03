@@ -1,6 +1,5 @@
-"""This script uses the Google Gemini API to process images and extract information from them. The script reads
-images from a directory, resizes them, and sends them to the API along with a prompt. The API generates a response
-containing the extracted information in JSON format. The script saves the extracted information to a JSON file with
+"""This script uses the Google Gemini API to process images and extract information from them.
+The script saves the extracted information to a TXT with
 the same name as the image file. The script processes multiple images in a batch."""
 
 # Import the required libraries
@@ -8,6 +7,10 @@ import json
 import os
 import re
 import time
+from PIL import Image
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Import the Google Gemini client
 import google.generativeai as genai
@@ -29,14 +32,16 @@ for root, _, filenames in os.walk(output_directory):
         os.remove(os.path.join(root, filename))
 
 # Set the API key, model, section, and temperature
-api_key = "your-api-key"
-model = "gemini-1.5-flash"
-section = "A"
+api_key = os.getenv("GEMINI_API_KEY")
+model_name = "gemini-2.5-flash"
 temperature = 0.5
+
+if not api_key:
+    raise ValueError("GEMINI_API_KEY nicht gefunden. Bitte .env Datei prüfen!")
 
 # Configure the GenerativeAI client with your API key.
 genai.configure(api_key=api_key)
-model = genai.GenerativeModel(model)
+model = genai.GenerativeModel(model_name)
 
 # Process each image in the image_data directory
 for root, _, filenames in os.walk(image_directory):
@@ -50,33 +55,15 @@ for root, _, filenames in os.walk(image_directory):
 
             # Create the prompt for the model
             print("> Sending the image to the API and requesting answer...", end=" ")
-            prompt = ('I present you an image and want you to extract every item in the list on the image.'
-                      'Each list item belongs to a section and the line has the following structure: '
-                      '[number]. [company], [location], [connections]. '
-                      'The last part is a comma separated list to other sections. They are formatted like this '
-                      '[section] [number], {section] [number]. '
-                      'Please return a json list of the complete page in the described structure.'
-                      f'The section of this image is "{section}", the page id is "{image_id}". '
-                      f'You need to find the page number on the base of the image.'
-                      'An example of a valid resulting list item is:'
-                      '{'
-                      '  "origin": {'
-                      '    "section": "A",'
-                      '    "page": "11",'
-                      '    "page_id": "3693659"'
-                      '  },'
-                      '  "number": "1", '
-                      '  "company": "Abbott, Anderson & Abbott Ltd.", '
-                      '  "location": "Harpenden, Herts.", '
-                      '  "connections": ['
-                      '     {"section": "B", "number": "123"},'
-                      '     {"section": "C", "number": "13"}'
-                      '  ]'
-                      '}')
+            prompt = ('Transkribiere mir den Text auf diesem Bild. '
+            'Der Text ist in Fraktur geschrieben. '
+            'Es handelt sich um einen Text von 1918, es geht um die Vorarlberger Frage. '
+            'Gebe mir den Text Wort für Wort wieder.')
 
-            image_file = genai.upload_file(path=os.path.join(root, filename))
+            image_path = os.path.join(root, filename)
+            image = Image.open(image_path)
 
-            answer = model.generate_content([prompt, image_file])
+            answer = model.generate_content([prompt, image])
             print("Done.")
 
             # Extract the answer from the response
@@ -88,33 +75,13 @@ for root, _, filenames in os.walk(image_directory):
             total_out_tokens += answer.usage_metadata.candidates_token_count
 
             print("> Processing the answer...")
-            # Save the answer to a json file. The filename should be the image_id with a .json extension
-            # The response from the API is a string which encloses the JSON object. We need to remove the enclosing
-            # quotes to get the JSON object. ```json [data] ``` -> [data]
-            pattern = r"```\s*json(.*?)\s*```"
-            match = re.search(pattern, answer_text, re.DOTALL)
-            if match:
-                # Extract the JSON content
-                answer_text = match.group(1).strip()
-
-                # Parse the JSON content into a Python object
-                try:
-                    answer_data = json.loads(answer_text)
-                except json.JSONDecodeError as e:
-                    print(f"> Failed to parse JSON: {e}")
-                    answer_data = None
-
-                if answer_data:
-                    # Create the answers directory if it doesn't exist
-                    os.makedirs(output_directory, exist_ok=True)
-
-                    # Save the answer to a JSON file
-                    with open(f"{output_directory}/{image_id}.json", "w", encoding="utf-8") as json_file:
-                        json.dump(answer_data, json_file, indent=4)
-                        print(f"> Saved the answer for {image_id} to {output_directory}/{image_id}.json")
-
-            else:
-                print("> No match found for the JSON content.")
+            
+            # Save answer as txt
+            os.makedirs(output_directory, exist_ok=True)
+            
+            with open(f"{output_directory}/{image_id}.txt", "w", encoding="utf-8") as txt_file:
+                txt_file.write(answer_text)
+                print(f"> Saved the answer for {image_id} to {output_directory}/{image_id}.txt")
 
             # File complete: Increment the file number
             file_number += 1
